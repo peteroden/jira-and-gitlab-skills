@@ -38,7 +38,7 @@ cp -r .github/skills/jira <your-repo>/.github/skills/
 cp -r .github/skills/gitlab <your-repo>/.github/skills/
 ```
 
-Both skills require `curl` and `python3` at runtime.
+Both skills require `python3` (3.6+) at runtime.
 
 ## License
 
