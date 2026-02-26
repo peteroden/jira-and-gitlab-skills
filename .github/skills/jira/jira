@@ -48,6 +48,11 @@ def _validate_key(key):
         die(f"invalid issue key: {key}")
 
 
+def _validate_positive_int(value, label="value"):
+    if not re.match(r"^\d+$", value):
+        die(f"{label} must be a positive integer, got: {value}")
+
+
 def _request(method, url, data=None, quiet=False):
     headers = {
         "Authorization": AUTH_HEADER,
@@ -121,6 +126,7 @@ def cmd_search(args):
         die("usage: jira search <jql> [max_results]")
     jql = args[0]
     max_results = args[1] if len(args) > 1 else "50"
+    _validate_positive_int(max_results, "max_results")
     encoded = urllib.parse.quote(jql, safe="")
     if JIRA_PAT:
         data = _request("GET", f"{API}/search?jql={encoded}&maxResults={max_results}", quiet=bool(FIELDS))
