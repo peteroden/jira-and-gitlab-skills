@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Jira REST API v2 client — works with Cloud (API token) and Server/DC (PAT).
+
+Env: JIRA_BASE_URL (required), JIRA_PAT (Server/DC) or JIRA_USER_EMAIL + JIRA_API_TOKEN (Cloud).
+"""
+
+import base64
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+sys.dont_write_bytecode = True
+
+
+def die(msg):
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "")
+if not JIRA_BASE_URL:
+    die("JIRA_BASE_URL is not set")
+if not re.match(r"^https?://", JIRA_BASE_URL):
+    die("JIRA_BASE_URL must start with https:// (or http:// for local dev)")
+
+API = JIRA_BASE_URL.rstrip("/") + "/rest/api/2"
+
+# Auth: PAT (Bearer) for Server/DC, email+token (Basic) for Cloud
+JIRA_PAT = os.environ.get("JIRA_PAT", "")
+JIRA_USER_EMAIL = os.environ.get("JIRA_USER_EMAIL", "")
+JIRA_API_TOKEN = os.environ.get("JIRA_API_TOKEN", "")
+
+if JIRA_PAT:
+    AUTH_HEADER = f"Bearer {JIRA_PAT}"
+elif JIRA_USER_EMAIL and JIRA_API_TOKEN:
+    creds = base64.b64encode(f"{JIRA_USER_EMAIL}:{JIRA_API_TOKEN}".encode()).decode()
+    AUTH_HEADER = f"Basic {creds}"
+else:
+    die("Set JIRA_PAT (Server/DC) or JIRA_USER_EMAIL + JIRA_API_TOKEN (Cloud)")
+
+
+def _validate_key(key):
+    if not re.match(r"^[A-Za-z][A-Za-z0-9]+-\d+$", key):
+        die(f"invalid issue key: {key}")
+
+
+def _validate_positive_int(value, label="value"):
+    if not re.match(r"^\d+$", value):
+        die(f"{label} must be a positive integer, got: {value}")
+
+
+def _request(method, url, data=None, quiet=False):
+    headers = {
+        "Authorization": AUTH_HEADER,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    body = json.dumps(data).encode() if data is not None else None
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req) as resp:
+            raw = resp.read().decode()
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode()
+        try:
+            d = json.loads(raw)
+            print(d.get("errorMessages", d.get("errors", d)), file=sys.stderr)
+        except (json.JSONDecodeError, ValueError):
+            print(raw, file=sys.stderr)
+        die(f"HTTP {e.code} from {method} {url}")
+
+    if not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        if not quiet:
+            print(raw)
+        return None
+    if not quiet:
+        print(json.dumps(parsed, indent=2))
+    return parsed
+
+
+FIELDS = None
+for i, a in enumerate(sys.argv):
+    if a == "--fields" and i + 1 < len(sys.argv):
+        FIELDS = sys.argv[i + 1].split(",")
+        sys.argv.pop(i)  # remove --fields
+        sys.argv.pop(i)  # remove the value
+        break
+
+
+def _extract(obj, path):
+    """Extract a value using dot-notation (e.g. 'fields.status.name')."""
+    for part in path.split("."):
+        if isinstance(obj, dict):
+            obj = obj.get(part)
+        else:
+            return ""
+    if obj is None:
+        return ""
+    if isinstance(obj, list):
+        return ", ".join(str(x) for x in obj)
+    return str(obj)
+
+
+def _print_fields(data):
+    """Print extracted fields for a single item or a list of items."""
+    if isinstance(data, list):
+        # Header
+        print("\t".join(FIELDS))
+        for item in data:
+            print("\t".join(_extract(item, f) for f in FIELDS))
+    else:
+        for f in FIELDS:
+            print(f"{f}: {_extract(data, f)}")
+
+
+def cmd_search(args):
+    if not args:
+        die("usage: jira search <jql> [max_results]")
+    jql = args[0]
+    max_results = args[1] if len(args) > 1 else "50"
+    _validate_positive_int(max_results, "max_results")
+    encoded = urllib.parse.quote(jql, safe="")
+    if JIRA_PAT:
+        data = _request("GET", f"{API}/search?jql={encoded}&maxResults={max_results}", quiet=bool(FIELDS))
+    else:
+        data = _request("GET", f"{API}/search/jql?jql={encoded}&maxResults={max_results}&fields=*navigable", quiet=bool(FIELDS))
+    if FIELDS and data:
+        _print_fields(data.get("issues", []))
+
+
+def cmd_get(args):
+    if not args:
+        die("usage: jira get <issue-key>")
+    key = args[0]
+    _validate_key(key)
+    data = _request("GET", f"{API}/issue/{key}", quiet=bool(FIELDS))
+    if FIELDS and data:
+        _print_fields(data)
+
+
+def cmd_create(args):
+    data = args[0] if args else sys.stdin.read().strip()
+    if not data:
+        die("usage: jira create <json> or pipe JSON to stdin")
+    _request("POST", f"{API}/issue", json.loads(data))
+
+
+def cmd_update(args):
+    if not args:
+        die("usage: jira update <issue-key> <json>")
+    key = args[0]
+    _validate_key(key)
+    data = args[1] if len(args) > 1 else sys.stdin.read().strip()
+    if not data:
+        die("usage: jira update <issue-key> <json> or pipe JSON to stdin")
+    _request("PUT", f"{API}/issue/{key}", json.loads(data))
+    print(json.dumps({"key": key, "status": "updated"}, indent=2))
+
+
+def cmd_transition(args):
+    if len(args) < 2:
+        die("usage: jira transition <issue-key> <name-or-id>")
+    key, target = args[0], args[1]
+    _validate_key(key)
+
+    if re.match(r"^\d+$", target):
+        tid = target
+    else:
+        data = _request("GET", f"{API}/issue/{key}/transitions", quiet=True)
+        matches = [t["id"] for t in (data or {}).get("transitions", []) if t["name"] == target]
+        if not matches:
+            die(f"transition '{target}' not found for {key}")
+        tid = matches[0]
+
+    _request("POST", f"{API}/issue/{key}/transitions", {"transition": {"id": tid}})
+    print(json.dumps({"key": key, "transitionId": tid, "status": "transitioned"}, indent=2))
+
+
+def cmd_comment(args):
+    if not args:
+        die("usage: jira comment <issue-key> <body>")
+    key = args[0]
+    _validate_key(key)
+    body = args[1] if len(args) > 1 else sys.stdin.read().strip()
+    if not body:
+        die("usage: jira comment <issue-key> <body> or pipe body to stdin")
+    _request("POST", f"{API}/issue/{key}/comment", {"body": body})
+
+
+def cmd_comments(args):
+    if not args:
+        die("usage: jira comments <issue-key> [issue-key ...]")
+    keys = args
+    for k in keys:
+        _validate_key(k)
+    all_comments = []
+    for k in keys:
+        data = _request("GET", f"{API}/issue/{k}/comment", quiet=True)
+        comments = (data or {}).get("comments", [])
+        for c in comments:
+            c["_issue"] = k
+        all_comments.extend(comments)
+    if FIELDS:
+        _print_fields(all_comments)
+    else:
+        print(json.dumps(all_comments, indent=2))
+
+
+def cmd_fields(args):
+    if not args:
+        die("usage: jira fields <project-key> [issue-type-id]")
+    project = args[0]
+    type_id = args[1] if len(args) > 1 else None
+    if type_id:
+        _request("GET", f"{API}/issue/createmeta/{project}/issuetypes/{type_id}")
+    else:
+        _request("GET", f"{API}/issue/createmeta/{project}/issuetypes")
+
+
+# --- Dispatch ---
+
+COMMANDS = {
+    "search": cmd_search,
+    "get": cmd_get,
+    "create": cmd_create,
+    "update": cmd_update,
+    "transition": cmd_transition,
+    "comment": cmd_comment,
+    "comments": cmd_comments,
+    "fields": cmd_fields,
+}
+
+if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+    die("usage: jira {search|get|create|update|transition|comment|comments|fields} [args...]")
+
+COMMANDS[sys.argv[1]](sys.argv[2:])

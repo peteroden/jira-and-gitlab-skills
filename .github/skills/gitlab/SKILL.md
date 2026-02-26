@@ -11,7 +11,7 @@ description: >
 
 ## Prerequisites
 
-The script at `.github/skills/gitlab/gitlab.sh` requires `curl` and `python3`.
+The script at `.github/skills/gitlab/gitlab` requires `python3` (3.6+).
 
 **Environment variables** (must be set before running any command):
 
@@ -23,37 +23,50 @@ The script at `.github/skills/gitlab/gitlab.sh` requires `curl` and `python3`.
 
 **Project auto-detection:** If `GITLAB_PROJECT` is not set, the script parses `git remote get-url origin` to extract the project path. This works for both SSH and HTTPS remotes. Set `GITLAB_PROJECT` explicitly when not in a git repo or targeting a different project.
 
+## Output Modes
+
+All read commands (`mr-list`, `mr-get`, `mr-notes`, `pipeline-get`, `pipeline-jobs`) support a `--fields` flag that extracts specific fields using dot-notation, outputting tab-separated values instead of raw JSON. **Always use `--fields` by default** to keep output concise:
+
+```bash
+.github/skills/gitlab/gitlab mr-list opened --fields iid,title,author.name,user_notes_count
+.github/skills/gitlab/gitlab mr-get 42 --fields iid,title,state,source_branch,target_branch
+.github/skills/gitlab/gitlab mr-notes 42 --fields author.name,created_at,body
+```
+
+For lists, output includes a header row. For single items, output is `field: value` per line. Nested fields use dot-notation (e.g. `author.name`). Omit `--fields` only when the full JSON is needed.
+
 ## Command Reference
 
-All commands use the full path: `.github/skills/gitlab/gitlab.sh <command> [args...]`
+All commands use the full path: `.github/skills/gitlab/gitlab <command> [args...]`
 
 ### Merge Requests
 
 | Command | Purpose | Syntax |
 |---------|---------|--------|
-| `mr-list` | List merge requests | `.github/skills/gitlab/gitlab.sh mr-list [state] [max]` |
-| `mr-get` | Fetch MR details | `.github/skills/gitlab/gitlab.sh mr-get <MR-IID>` |
-| `mr-create` | Create a new MR | `.github/skills/gitlab/gitlab.sh mr-create '<json>'` |
-| `mr-update` | Update MR fields | `.github/skills/gitlab/gitlab.sh mr-update <MR-IID> '<json>'` |
-| `mr-comment` | Add a comment/note | `.github/skills/gitlab/gitlab.sh mr-comment <MR-IID> '<body>'` |
+| `mr-list` | List merge requests | `.github/skills/gitlab/gitlab mr-list [state] [max]` |
+| `mr-get` | Fetch MR details | `.github/skills/gitlab/gitlab mr-get <MR-IID>` |
+| `mr-create` | Create a new MR | `.github/skills/gitlab/gitlab mr-create '<json>'` |
+| `mr-update` | Update MR fields | `.github/skills/gitlab/gitlab mr-update <MR-IID> '<json>'` |
+| `mr-comment` | Add a comment/note | `.github/skills/gitlab/gitlab mr-comment <MR-IID> '<body>'` |
+| `mr-notes` | List MR comments | `.github/skills/gitlab/gitlab mr-notes <MR-IID> [max]` |
 
 ### Pipelines & Jobs
 
 | Command | Purpose | Syntax |
 |---------|---------|--------|
-| `pipeline-get` | Get pipeline status | `.github/skills/gitlab/gitlab.sh pipeline-get <PIPELINE-ID>` |
-| `pipeline-run` | Run a pipeline on a branch | `.github/skills/gitlab/gitlab.sh pipeline-run <BRANCH>` |
-| `pipeline-jobs` | List jobs in a pipeline | `.github/skills/gitlab/gitlab.sh pipeline-jobs <PIPELINE-ID>` |
-| `job-log` | Read a job's log output | `.github/skills/gitlab/gitlab.sh job-log <JOB-ID>` |
+| `pipeline-get` | Get pipeline status | `.github/skills/gitlab/gitlab pipeline-get <PIPELINE-ID>` |
+| `pipeline-run` | Run a pipeline on a branch | `.github/skills/gitlab/gitlab pipeline-run <BRANCH>` |
+| `pipeline-jobs` | List jobs in a pipeline | `.github/skills/gitlab/gitlab pipeline-jobs <PIPELINE-ID>` |
+| `job-log` | Read a job's log output | `.github/skills/gitlab/gitlab job-log <JOB-ID>` |
 
 ## Workflows
 
 ### List Merge Requests
 
 ```bash
-.github/skills/gitlab/gitlab.sh mr-list              # all MRs, last 20
-.github/skills/gitlab/gitlab.sh mr-list opened        # only open MRs
-.github/skills/gitlab/gitlab.sh mr-list merged 5      # last 5 merged MRs
+.github/skills/gitlab/gitlab mr-list              # all MRs, last 20
+.github/skills/gitlab/gitlab mr-list opened        # only open MRs
+.github/skills/gitlab/gitlab mr-list merged 5      # last 5 merged MRs
 ```
 
 State values: `all` (default), `opened`, `closed`, `merged`.
@@ -61,7 +74,7 @@ State values: `all` (default), `opened`, `closed`, `merged`.
 ### Get Merge Request Details
 
 ```bash
-.github/skills/gitlab/gitlab.sh mr-get 42
+.github/skills/gitlab/gitlab mr-get 42
 ```
 
 Output: full MR JSON including title, description, state, source/target branches, author, reviewers, labels, and merge status.
@@ -73,7 +86,7 @@ Output: full MR JSON including title, description, state, source/target branches
 Required fields: `source_branch`, `target_branch`, `title`.
 
 ```bash
-.github/skills/gitlab/gitlab.sh mr-create '{
+.github/skills/gitlab/gitlab mr-create '{
   "source_branch": "feature/add-auth",
   "target_branch": "main",
   "title": "feat(auth): add OAuth2 login"
@@ -84,7 +97,7 @@ Required fields: `source_branch`, `target_branch`, `title`.
 
 The response includes the MR IID. Use `mr-get` to confirm:
 ```bash
-.github/skills/gitlab/gitlab.sh mr-get 43
+.github/skills/gitlab/gitlab mr-get 43
 ```
 
 ### Update a Merge Request
@@ -92,7 +105,7 @@ The response includes the MR IID. Use `mr-get` to confirm:
 Only include fields you want to change:
 
 ```bash
-.github/skills/gitlab/gitlab.sh mr-update 42 '{
+.github/skills/gitlab/gitlab mr-update 42 '{
   "title": "fix(auth): resolve OAuth timeout",
   "description": "Increased timeout from 10s to 30s for token exchange.",
   "labels": "bug,auth"
@@ -102,38 +115,38 @@ Only include fields you want to change:
 ### Comment on a Merge Request
 
 ```bash
-.github/skills/gitlab/gitlab.sh mr-comment 42 "CI passed. Ready for review."
+.github/skills/gitlab/gitlab mr-comment 42 "CI passed. Ready for review."
 ```
 
 Or pipe from stdin:
 ```bash
-echo "Addressed review feedback in latest commit." | .github/skills/gitlab/gitlab.sh mr-comment 42
+echo "Addressed review feedback in latest commit." | .github/skills/gitlab/gitlab mr-comment 42
 ```
 
 ### Debug a Failed Pipeline (Step-by-Step)
 
 **Step 1 — Get the pipeline status:**
 ```bash
-.github/skills/gitlab/gitlab.sh pipeline-get 12345
+.github/skills/gitlab/gitlab pipeline-get 12345
 ```
 Look at `"status"` — values: `running`, `pending`, `success`, `failed`, `canceled`, `skipped`.
 
 **Step 2 — List jobs to find the failure:**
 ```bash
-.github/skills/gitlab/gitlab.sh pipeline-jobs 12345
+.github/skills/gitlab/gitlab pipeline-jobs 12345
 ```
 Look for jobs with `"status": "failed"`. Note the job `id`.
 
 **Step 3 — Read the failed job's log:**
 ```bash
-.github/skills/gitlab/gitlab.sh job-log 67890
+.github/skills/gitlab/gitlab job-log 67890
 ```
 Output: raw log text. Look for error messages near the end.
 
 ### Run a Pipeline
 
 ```bash
-.github/skills/gitlab/gitlab.sh pipeline-run main
+.github/skills/gitlab/gitlab pipeline-run main
 ```
 
 Output: pipeline JSON with `id` and `status`. Use `pipeline-get` to poll for completion.
@@ -184,7 +197,7 @@ Same fields as `mr-create` (except `source_branch`). Only include fields you wan
 | `HTTP 403` | Insufficient permissions | Token needs `api` scope; check project membership |
 | `HTTP 404` | Wrong project or MR/pipeline ID | Verify `GITLAB_PROJECT`, check MR IID vs ID |
 | `expected numeric ID` | Non-numeric argument | MR IIDs, pipeline IDs, and job IDs must be numbers |
-| `python3 is required` | python3 not installed | Install python3 for your platform |
+| `python3 is required` | python3 not in PATH | Install python3 for your platform |
 
 ### MR IID vs ID
 

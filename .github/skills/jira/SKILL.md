@@ -11,7 +11,7 @@ description: >
 
 ## Prerequisites
 
-The script at `.github/skills/jira/jira.sh` requires `curl` and `python3`.
+The script at `.github/skills/jira/jira` requires `python3` (3.6+).
 
 **Environment variables** (must be set before running any command):
 
@@ -26,26 +26,39 @@ Auth is auto-detected: if `JIRA_PAT` is set → Server/DC bearer auth. Otherwise
 
 If a command fails with `JIRA_BASE_URL is not set`, verify the env vars are exported in the current shell.
 
+## Output Modes
+
+All read commands (`search`, `get`, `comments`) support a `--fields` flag that extracts specific fields using dot-notation, outputting tab-separated values instead of raw JSON. **Always use `--fields` by default** to keep output concise:
+
+```bash
+.github/skills/jira/jira search 'assignee = currentUser()' --fields key,fields.summary,fields.status.name
+.github/skills/jira/jira get PROJ-123 --fields key,fields.summary,fields.status.name,fields.assignee.displayName
+.github/skills/jira/jira comments PROJ-123 PROJ-456 --fields _issue,author.displayName,created,body
+```
+
+For lists, output includes a header row. For single items, output is `field: value` per line. Nested fields use dot-notation (e.g. `fields.status.name`). Omit `--fields` only when the full JSON is needed.
+
 ## Command Reference
 
-All commands use the full path: `.github/skills/jira/jira.sh <command> [args...]`
+All commands use the full path: `.github/skills/jira/jira <command> [args...]`
 
 | Command | Purpose | Syntax |
 |---------|---------|--------|
-| `search` | Find issues via JQL | `.github/skills/jira/jira.sh search '<jql>' [max_results]` |
-| `get` | Fetch a single issue | `.github/skills/jira/jira.sh get <ISSUE-KEY>` |
-| `create` | Create a new issue | `.github/skills/jira/jira.sh create '<json>'` |
-| `update` | Update issue fields | `.github/skills/jira/jira.sh update <ISSUE-KEY> '<json>'` |
-| `transition` | Change issue status | `.github/skills/jira/jira.sh transition <ISSUE-KEY> '<status>'` |
-| `comment` | Add a comment | `.github/skills/jira/jira.sh comment <ISSUE-KEY> '<body>'` |
-| `fields` | Discover issue types & fields | `.github/skills/jira/jira.sh fields <PROJECT-KEY> [issue-type-id]` |
+| `search` | Find issues via JQL | `.github/skills/jira/jira search '<jql>' [max_results]` |
+| `get` | Fetch a single issue | `.github/skills/jira/jira get <ISSUE-KEY>` |
+| `create` | Create a new issue | `.github/skills/jira/jira create '<json>'` |
+| `update` | Update issue fields | `.github/skills/jira/jira update <ISSUE-KEY> '<json>'` |
+| `transition` | Change issue status | `.github/skills/jira/jira transition <ISSUE-KEY> '<status>'` |
+| `comment` | Add a comment | `.github/skills/jira/jira comment <ISSUE-KEY> '<body>'` |
+| `comments` | List comments on issues | `.github/skills/jira/jira comments <ISSUE-KEY> [ISSUE-KEY ...]` |
+| `fields` | Discover issue types & fields | `.github/skills/jira/jira fields <PROJECT-KEY> [issue-type-id]` |
 
 ## Workflows
 
 ### Look Up an Issue
 
 ```bash
-.github/skills/jira/jira.sh get PROJ-123
+.github/skills/jira/jira get PROJ-123
 ```
 
 Output: full issue JSON including key, summary, description, status, assignee, priority, labels, and comments.
@@ -53,8 +66,8 @@ Output: full issue JSON including key, summary, description, status, assignee, p
 ### Search for Issues
 
 ```bash
-.github/skills/jira/jira.sh search 'project = PROJ AND status = "In Progress"'
-.github/skills/jira/jira.sh search 'assignee = currentUser() ORDER BY updated DESC' 10
+.github/skills/jira/jira search 'project = PROJ AND status = "In Progress"'
+.github/skills/jira/jira search 'assignee = currentUser() ORDER BY updated DESC' 10
 ```
 
 **Important (Cloud):** The new search API requires a bounded query. Always include a `project`, `assignee`, or other filter — bare `ORDER BY` queries will fail.
@@ -63,19 +76,19 @@ Output: full issue JSON including key, summary, description, status, assignee, p
 
 **Step 1 — Discover issue types:**
 ```bash
-.github/skills/jira/jira.sh fields PROJ
+.github/skills/jira/jira fields PROJ
 ```
 Output includes issue type IDs. Find the one you need (e.g., Task → `10045`).
 
 **Step 2 — Discover required fields for that issue type:**
 ```bash
-.github/skills/jira/jira.sh fields PROJ 10045
+.github/skills/jira/jira fields PROJ 10045
 ```
 Look at `"required": true` fields in the response. Every project may have custom required fields beyond the standard ones.
 
 **Step 3 — Build the JSON payload and create:**
 ```bash
-.github/skills/jira/jira.sh create '{
+.github/skills/jira/jira create '{
   "fields": {
     "project": { "key": "PROJ" },
     "summary": "Short description of the issue",
@@ -91,7 +104,7 @@ Output: `{ "id": "...", "key": "PROJ-42", "self": "..." }`
 Only include fields you want to change:
 
 ```bash
-.github/skills/jira/jira.sh update PROJ-123 '{
+.github/skills/jira/jira update PROJ-123 '{
   "fields": {
     "summary": "Updated summary",
     "priority": { "name": "High" },
@@ -107,8 +120,8 @@ Only include fields you want to change:
 Use a transition name (e.g., "In Progress", "Done") or a transition ID:
 
 ```bash
-.github/skills/jira/jira.sh transition PROJ-123 "In Progress"
-.github/skills/jira/jira.sh transition PROJ-123 "Done"
+.github/skills/jira/jira transition PROJ-123 "In Progress"
+.github/skills/jira/jira transition PROJ-123 "Done"
 ```
 
 If the transition name is not found, the script lists available transitions in the error output.
@@ -116,12 +129,12 @@ If the transition name is not found, the script lists available transitions in t
 ### Add a Comment
 
 ```bash
-.github/skills/jira/jira.sh comment PROJ-123 "PR #42 addresses this issue."
+.github/skills/jira/jira comment PROJ-123 "PR #42 addresses this issue."
 ```
 
 Or pipe from stdin:
 ```bash
-echo "Deployed to staging." | .github/skills/jira/jira.sh comment PROJ-123
+echo "Deployed to staging." | .github/skills/jira/jira comment PROJ-123
 ```
 
 ## JSON Field Reference
@@ -178,4 +191,4 @@ echo "Deployed to staging." | .github/skills/jira/jira.sh comment PROJ-123
 | `HTTP 410` | Deprecated endpoint | You're hitting a removed Cloud API — update the script |
 | `transition '...' not found` | Invalid transition name | Check available transitions with `get` (look at status) |
 | `invalid issue key` | Key doesn't match `PROJ-123` format | Use uppercase project key + number |
-| `python3 is required` | python3 not installed | Install python3 for your platform |
+| `python3 is required` | python3 not in PATH | Install python3 for your platform |
